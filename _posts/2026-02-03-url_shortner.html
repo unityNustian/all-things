@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Designing a Highly Scalable URL Shortener: A Comprehensive System Design</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 40px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-radius: 8px;
+        }
+        
+        h1 {
+            color: #1a1a1a;
+            font-size: 2.2em;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #007acc;
+        }
+        
+        h2 {
+            color: #2c3e50;
+            font-size: 1.8em;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        h3 {
+            color: #34495e;
+            font-size: 1.3em;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+        
+        ul {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+        }
+        
+        strong {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9em;
+            color: #d73a49;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        th {
+            background-color: #007acc;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+        
+        hr {
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 30px 0;
+        }
+        
+        .highlight {
+            background-color: #fff3cd;
+            padding: 15px;
+            border-left: 4px solid #ffc107;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+            
+            h2 {
+                font-size: 1.5em;
+            }
+            
+            table {
+                font-size: 0.9em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Designing a Highly Scalable URL Shortener: A Comprehensive System Design</h1>
+        
+        <p>Designing a URL shortener like Bitly or TinyURL is a classic system design challenge that touches on distributed systems, database sharding, caching, and security. This document provides a detailed breakdown of the architecture, trade-offs, and concrete implementation strategies.</p>
+        
+        <hr>
+        
+        <h2>1. Overview and Core Goals</h2>
+        
+        <p>The primary purpose of a URL shortener is to map a long URL to a unique, compact alias. When a user visits the short URL, the system redirects them to the original destination.</p>
+        
+        <h3>Primary Goals</h3>
+        <ul>
+            <li><strong>Low Latency</strong>: Redirects should ideally occur in under 50–100 ms to ensure a seamless user experience.</li>
+            <li><strong>High Availability</strong>: The redirection service is mission-critical; it must be resilient to regional failures.</li>
+            <li><strong>Scalability</strong>: The system must handle billions of URLs and millions of redirects per second.</li>
+            <li><strong>Abuse Protection</strong>: Prevention of phishing, malware, and spam is essential for maintaining the service's reputation.</li>
+        </ul>
+        
+        <hr>
+        
+        <h2>2. Requirements</h2>
+        
+        <h3>Functional Requirements</h3>
+        <ul>
+            <li><strong>URL Shortening</strong>: Generate a unique short alias for any given long URL.</li>
+            <li><strong>Redirection</strong>: Efficiently redirect users from the short link to the original URL.</li>
+            <li><strong>Custom Aliases</strong>: Allow users to define "vanity" URLs (e.g., <code>bit.ly/my-awesome-link</code>).</li>
+            <li><strong>Analytics</strong>: Track click data (geo-location, referrer, device type, timestamp).</li>
+            <li><strong>Expiration</strong>: Support automatic deletion of links after a specified duration.</li>
+        </ul>
+        
+        <h3>Non-Functional Requirements</h3>
+        <ul>
+            <li><strong>Read-Heavy Nature</strong>: The ratio of reads (redirects) to writes (creations) is typically 100:1 or higher.</li>
+            <li><strong>Consistency</strong>: Redirect lookups must be strongly consistent (or highly available with low replication lag).</li>
+            <li><strong>Durability</strong>: Once a link is created, it should not be lost.</li>
+        </ul>
+        
+        <hr>
+        
+        <h2>3. Core API Design</h2>
+        
+        <p>A clean, RESTful API is the foundation of the service.</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Endpoint</th>
+                    <th>Description</th>
+                    <th>Payload Example</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>POST</strong></td>
+                    <td><code>/v1/shorten</code></td>
+                    <td>Creates a shortened URL</td>
+                    <td><code>{ "url": "https://example.com/long-path", "alias": "custom", "expiry": "2026-12-31" }</code></td>
+                </tr>
+                <tr>
+                    <td><strong>GET</strong></td>
+                    <td><code>/:shortId</code></td>
+                    <td>Redirects to target URL</td>
+                    <td>N/A</td>
+                </tr>
+                <tr>
+                    <td><strong>GET</strong></td>
+                    <td><code>/:shortId/stats</code></td>
+                    <td>Returns click analytics</td>
+                    <td>N/A</td>
+                </tr>
+                <tr>
+                    <td><strong>DELETE</strong></td>
+                    <td><code>/:shortId</code></td>
+                    <td>Deletes/disables a link</td>
+                    <td>N/A</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <hr>
+        
+        <h2>4. Short Key Generation Strategies</h2>
+        
+        <p>Choosing how to generate the unique <code>shortId</code> is the most critical design decision.</p>
+        
+        <h3>Strategy A: Sequential IDs with Base62 Encoding</h3>
+        <p>This involves using a central counter (or a distributed ID generator like Snowflake) and converting the numeric ID into a Base62 string (a–z, A–Z, 0–9).</p>
+        <ul>
+            <li><strong>Pros</strong>: Guaranteed uniqueness, compact keys, easy to shard by numeric range.</li>
+            <li><strong>Cons</strong>: Predictable URLs (users can guess the next link), requires a distributed counter.</li>
+        </ul>
+        
+        <h3>Strategy B: Random Token Generation</h3>
+        <p>Generate a random 6–8 character string and check the database for collisions.</p>
+        <ul>
+            <li><strong>Pros</strong>: Non-predictable, easier to generate in a decentralized manner.</li>
+            <li><strong>Cons</strong>: Collision probability increases as the database grows; requires a "check-then-insert" loop.</li>
+        </ul>
+        
+        <h3>Strategy C: Hash-based (MD5/SHA)</h3>
+        <p>Hash the long URL and take the first N characters of the Base62-encoded hash.</p>
+        <ul>
+            <li><strong>Pros</strong>: Idempotent (same URL always gets the same short link).</li>
+            <li><strong>Cons</strong>: High collision rate with truncation; handling custom aliases requires a separate flow.</li>
+        </ul>
+        
+        <h3>Key Length vs. Capacity (Base62)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Length</th>
+                    <th>Total Unique Keys</th>
+                    <th>Scale Reference</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>4 chars</td>
+                    <td>62⁴ ≈ 14.7 Million</td>
+                    <td>Small/Internal tools</td>
+                </tr>
+                <tr>
+                    <td>5 chars</td>
+                    <td>62⁵ ≈ 916 Million</td>
+                    <td>Medium-scale service</td>
+                </tr>
+                <tr>
+                    <td>6 chars</td>
+                    <td>62⁶ ≈ 56.8 Billion</td>
+                    <td>Global-scale (Bitly/TinyURL)</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <hr>
+        
+        <h2>5. Data Modeling and Storage</h2>
+        
+        <p>The data model is simple, but the storage strategy must account for massive scale.</p>
+        
+        <h3>Minimal Schema</h3>
+        <ul>
+            <li><code>short_id</code> (PK, VARCHAR): The unique alias.</li>
+            <li><code>target_url</code> (TEXT): The destination URL.</li>
+            <li><code>owner_id</code> (UUID): Reference to the creator.</li>
+            <li><code>created_at</code>, <code>expires_at</code> (TIMESTAMP): Lifecycle management.</li>
+            <li><code>disabled</code> (BOOLEAN): For abuse/takedown handling.</li>
+        </ul>
+        
+        <h3>Storage Choices</h3>
+        <ul>
+            <li><strong>SQL (PostgreSQL/MySQL)</strong>: Best for consistency and relational features (e.g., user management). Use <strong>sharding by <code>hash(short_id)</code></strong> to distribute load.</li>
+            <li><strong>NoSQL (DynamoDB/Cassandra)</strong>: Ideal for extreme write throughput and horizontal scaling. DynamoDB's TTL feature is perfect for link expiration.</li>
+        </ul>
+        
+        <hr>
+        
+        <h2>6. Caching and Latency Optimization</h2>
+        
+        <p>To achieve &lt; 100ms redirects, caching is non-negotiable.</p>
+        
+        <h3>Caching Layers</h3>
+        <ol>
+            <li><strong>L1 (Application Cache)</strong>: Store the most popular 1% of links in memory (LRU cache) within the service process.</li>
+            <li><strong>L2 (Redis/Memcached)</strong>: A distributed cache cluster. Since short URLs are immutable, we can use a long TTL.</li>
+            <li><strong>Edge Redirection</strong>: Use Cloudflare Workers or Lambda@Edge to perform the redirect at the CDN level, reducing latency to &lt; 10ms for global users.</li>
+        </ol>
+        
+        <h3>HTTP Redirect Types</h3>
+        <ul>
+            <li><strong>301 (Permanent)</strong>: Browsers cache the redirect. Reduces server load but makes analytics gathering difficult.</li>
+            <li><strong>302 (Found/Temporary)</strong>: Browsers do not cache. Every click hits the server, allowing for 100% accurate analytics. <strong>Recommended for most commercial shorteners.</strong></li>
+        </ul>
+        
+        <hr>
+        
+        <h2>7. Analytics Pipeline</h2>
+        
+        <p>Analytics logging must be decoupled from the redirect path to avoid blocking the user.</p>
+        
+        <ol>
+            <li><strong>Event Capture</strong>: The redirect worker sends a "click event" to a message queue (e.g., <strong>Apache Kafka</strong> or <strong>AWS SQS</strong>).</li>
+            <li><strong>Stream Processing</strong>: <strong>Apache Flink</strong> or <strong>Kafka Streams</strong> aggregates data in real-time (e.g., "clicks per minute").</li>
+            <li><strong>Long-term Storage</strong>: Store raw events in an OLAP database like <strong>ClickHouse</strong>, <strong>BigQuery</strong>, or <strong>Snowflake</strong> for complex reporting.</li>
+        </ol>
+        
+        <hr>
+        
+        <h2>8. Security and Abuse Prevention</h2>
+        
+        <p>A URL shortener is a prime target for malicious actors.</p>
+        
+        <ul>
+            <li><strong>URL Scanning</strong>: Integrate with services like Google Safe Browsing to check target URLs for malware/phishing.</li>
+            <li><strong>Rate Limiting</strong>: Implement per-IP and per-API-key limits on the <code>/shorten</code> endpoint to prevent bulk spam.</li>
+            <li><strong>Blacklisting</strong>: Maintain a list of forbidden domains (e.g., <code>*.onion</code>, internal IPs).</li>
+            <li><strong>Quarantine</strong>: Suspicious links should redirect to a warning page rather than the final destination.</li>
+        </ul>
+        
+        <hr>
+        
+        <h2>9. Concrete Scale Example (Worked Example)</h2>
+        
+        <p>Assume we want to support <strong>1 Billion URLs</strong> with <strong>100,000 Redirects per Second (RPS)</strong>.</p>
+        
+        <h3>Storage Calculation</h3>
+        <ul>
+            <li>Metadata per URL: ~200 bytes.</li>
+            <li>Total Raw Storage: 1B * 200 bytes = <strong>200 GB</strong>.</li>
+            <li>With indices and replication (3x): <strong>~600 GB - 1 TB</strong>.</li>
+        </ul>
+        
+        <h3>Throughput &amp; Caching</h3>
+        <ul>
+            <li>100k RPS is high for a single DB.</li>
+            <li><strong>Cache Hit Ratio (90%)</strong>: 90k RPS served from Redis, 10k RPS hitting the DB.</li>
+            <li><strong>Redis Memory</strong>: To cache 10 million "hot" links: 10M * 200 bytes = <strong>2 GB</strong>. This easily fits in a small Redis cluster.</li>
+        </ul>
+        
+        <hr>
+        
+        <h2>10. Summary of Trade-offs</h2>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Option A</th>
+                    <th>Option B</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Key Gen</strong></td>
+                    <td>Sequential (Compact)</td>
+                    <td>Random (Private)</td>
+                    <td><strong>Random</strong> for public services to prevent scraping.</td>
+                </tr>
+                <tr>
+                    <td><strong>Database</strong></td>
+                    <td>SQL (ACID)</td>
+                    <td>NoSQL (Scale)</td>
+                    <td><strong>NoSQL</strong> for the mapping table; SQL for user data.</td>
+                </tr>
+                <tr>
+                    <td><strong>Redirect</strong></td>
+                    <td>301 (Faster)</td>
+                    <td>302 (Better Data)</td>
+                    <td><strong>302</strong> to ensure analytics are captured.</td>
+                </tr>
+                <tr>
+                    <td><strong>Latency</strong></td>
+                    <td>Centralized</td>
+                    <td>Edge/CDN</td>
+                    <td><strong>Edge</strong> for global reach if budget allows.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
