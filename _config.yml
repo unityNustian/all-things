@@ -1,2 +1,5 @@
-title: "My Blog YML"
-theme: jekyll-theme-minimal
+title: "My Blog"
+description: "Cayman theme"
+theme: jekyll-theme-cayman
+
+markdown: kramdown
